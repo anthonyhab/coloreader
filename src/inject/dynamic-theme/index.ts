@@ -842,3 +842,28 @@ export function cleanDynamicThemeCache(): void {
     prevTheme = null;
     prevFixes = null;
 }
+
+// === ULTRA-FAST THEME UPDATE ===
+export function updateThemeVars(bg: string, fg: string, sel?: string): void {
+    if (!theme) {
+        return;
+    }
+
+    // Update the theme object directly
+    theme.darkSchemeBackgroundColor = bg;
+    theme.darkSchemeTextColor = fg;
+    if (sel) {
+        theme.selectionColor = sel;
+    }
+
+    // Get the current palette
+    const palette = getColorPalette();
+
+    // Clear and rebuild the color palette with new colors
+    clearColorPalette();
+
+    // Re-register all colors with the new theme
+    palette.background.forEach((color) => modifyBackgroundColor(color, theme!));
+    palette.text.forEach((color) => modifyForegroundColor(color, theme!));
+    palette.border.forEach((color) => modifyBorderColor(color, theme!));
+}

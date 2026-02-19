@@ -7,7 +7,7 @@ import {activateTheme} from '@plus/utils/theme';
 
 import {writeEnabledForHost} from './cache';
 import {runDarkThemeDetector, stopDarkThemeDetector} from './detector';
-import {createOrUpdateDynamicTheme, removeDynamicTheme, cleanDynamicThemeCache} from './dynamic-theme';
+import {createOrUpdateDynamicTheme, removeDynamicTheme, cleanDynamicThemeCache, updateThemeVars} from './dynamic-theme';
 import {collectCSS} from './dynamic-theme/css-collection';
 import {createOrUpdateStyle, removeStyle} from './style';
 import {createOrUpdateSVGFilter, removeSVGFilter} from './svg-filter';
@@ -85,6 +85,15 @@ function sendMessage(message: MessageCStoBG | MessageCStoUI): true | undefined {
 }
 
 function onMessage(message: MessageBGtoCS | MessageUItoCS | DebugMessageBGtoCS) {
+    // Handle updateThemeVars message for ultra-fast theme updates
+    if ((message as any).type === 'updateThemeVars') {
+        const {bg, fg, sel} = (message as any).data || {};
+        if (bg && fg) {
+            updateThemeVars(bg, fg, sel);
+        }
+        return;
+    }
+
     if (__DEBUG__ && message.type === DebugMessageTypeBGtoCS.RELOAD) {
         logWarn('Cleaning up before update');
         cleanup();
