@@ -1,4 +1,4 @@
-import type {ExtensionData, Theme, Shortcuts, UserSettings, TabInfo, TabData, Command, DevToolsData, ExternalConnection, ShadowCopy, ExternalRequest} from '../definitions';
+import type {ExtensionData, Theme, Shortcuts, UserSettings, TabInfo, TabData, Command, DevToolsData, ExternalConnection, ExternalRequest} from '../definitions';
 import createCSSFilterStylesheet from '../generators/css-filter';
 import {getDetectorHintsFor} from '../generators/detector-hints';
 import {getDynamicThemeFixesFor} from '../generators/dynamic-theme';
