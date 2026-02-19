@@ -28,7 +28,7 @@ import UserStorage from './user-storage';
 import {getCommands, canInjectScript, writeLocalStorage, removeLocalStorage} from './utils/extension-api';
 import {logInfo, logWarn} from './utils/log';
 import {setWindowTheme, resetWindowTheme} from './window-theme';
-import {DEFAULT_SETTINGS, DEFAULT_THEME} from '../defaults';
+import {DEFAULT_SETTINGS} from '../defaults';
 import {getValidatedObject, getPreviousObject} from '../utils/object';
 import {forEach, isArrayEqual} from '../utils/array';
 
@@ -642,11 +642,14 @@ export class Extension {
                 logWarn('No data detected for setTheme.');
                 return;
             }
-            logInfo(`Port: ${origin}, made changes to the settings.`);
-            const validatedData = getValidatedObject(data, DEFAULT_THEME);
-            Extension.copyShadowCopy({theme: validatedData} as UserSettings, origin);
-            Extension.setTheme(validatedData);
-            logInfo('Saved', UserStorage.settings.theme);
+            logInfo(`Port: ${origin}, updating theme via fast path.`);
+            // Use fast path for color-only updates
+            const bg = data.darkSchemeBackgroundColor;
+            const fg = data.darkSchemeTextColor;
+            const sel = data.selectionColor;
+            if (bg || fg) {
+                Extension.setThemeVars({bg: bg, fg: fg, sel: sel});
+            }
         }
 
         // === ULTRA-FAST THEME UPDATE ===
@@ -717,7 +720,17 @@ export class Extension {
     private static setThemeVars(data: { bg: string; fg: string; sel: string }) {
         const {bg, fg, sel} = data;
         
-        // Send message to all tabs to update CSS variables
+        // Update stored theme settings (persists across restarts, used by new tabs)
+        const themeUpdate: Partial<Theme> = {};
+        if (bg) themeUpdate.darkSchemeBackgroundColor = bg;
+        if (fg) themeUpdate.darkSchemeTextColor = fg;
+        if (sel) themeUpdate.selectionColor = sel;
+        
+        if (Object.keys(themeUpdate).length > 0) {
+            UserStorage.set({theme: {...UserStorage.settings.theme, ...themeUpdate}});
+        }
+        
+        // Send message to all tabs to update CSS variables (fast path)
         chrome.tabs.query({}, (tabs) => {
             tabs.forEach(tab => {
                 if (tab.id) {
