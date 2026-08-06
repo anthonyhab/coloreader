@@ -1,0 +1,10 @@
+{
+    "extends": "./../unit/tsconfig.json",
+    "compilerOptions": {
+        "paths": {
+            "@plus/*": ["../../src/stubs/*"],
+            "definitions": ["../../src/definitions"],
+            "utils/color": ["../../src/utils/color"]
+        }
+    }
+}

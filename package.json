@@ -32,6 +32,7 @@
     "test:inject": "node --max-old-space-size=3072 node_modules/.bin/karma start ./tests/inject/karma.conf.cjs",
     "test:inject:debug": "node --max-old-space-size=3072 node_modules/.bin/karma start ./tests/inject/karma.conf.cjs --debug",
     "test:unit": "jest --config=tests/unit/jest.config.mjs",
+    "test:bench": "jest --config=tests/bench/jest.config.mjs",
     "test:unit:debug": "node --inspect-brk ./node_modules/jest/bin/jest --config=tests/unit/jest.config.mjs --runInBand --no-cache --watch",
     "translate-en-message": "node ./tasks/translate.js --message",
     "translate-new-en-messages": "node ./tasks/translate.js --new-messages",
