@@ -24,6 +24,7 @@ import {clearColorPalette, getColorPalette, registerVariablesSheet, releaseVaria
 import type {StyleElement, StyleManager} from './style-manager';
 import {manageStyle, getManageableStyles, cleanLoadingLinks, setIgnoredCSSURLs} from './style-manager';
 import {injectProxy} from './stylesheet-proxy';
+import {ThemeVarsSignatureTracker} from './theme-vars-signature';
 import {variablesStore} from './variables';
 import {watchForStyleChanges, stopWatchingForStyleChanges} from './watch';
 
@@ -43,6 +44,8 @@ let ignoredImageAnalysisSelectors: string[] = [];
 let ignoredInlineSelectors: string[] = [];
 
 let staticStyleMap = new WeakMap<ParentNode, Map<string, HTMLStyleElement>>();
+
+const themeVarsSignatureTracker = new ThemeVarsSignatureTracker();
 
 function createOrUpdateStyle(className: string, root: ParentNode = document.head || document): HTMLStyleElement {
     let element: HTMLStyleElement | null = root.querySelector(`.${className}`);
@@ -678,6 +681,8 @@ let prevFixes: DynamicThemeFix | null = null;
 export function createOrUpdateDynamicThemeInternal(themeConfig: Theme, dynamicThemeFixes: DynamicThemeFix | null, iframe: boolean): void {
     theme = themeConfig;
     fixes = dynamicThemeFixes;
+    // A full theme message may carry different colors; re-arm the vars dedup.
+    themeVarsSignatureTracker.reset();
 
     const colorAffectingKeys: Array<keyof Theme> = [
         'brightness',
@@ -841,6 +846,7 @@ export function removeDynamicTheme(): void {
 }
 
 export function cleanDynamicThemeCache(): void {
+    themeVarsSignatureTracker.reset();
     variablesStore.clear();
     parsedURLCache.clear();
     removeDocumentVisibilityListener();
@@ -863,8 +869,12 @@ export function updateThemeVars(
     fg: string,
     sel?: string,
     scheme: 'dark' | 'light' = 'dark',
+    signature: string | null = null,
 ): void {
     if (!theme) {
+        return;
+    }
+    if (themeVarsSignatureTracker.isDuplicate(signature)) {
         return;
     }
 
@@ -873,6 +883,7 @@ export function updateThemeVars(
         theme.darkSchemeBackgroundColor === bg && theme.darkSchemeTextColor === fg :
         theme.lightSchemeBackgroundColor === bg && theme.lightSchemeTextColor === fg;
     if (colorsMatch && theme.selectionColor === selection) {
+        themeVarsSignatureTracker.record(signature);
         return;
     }
 
@@ -899,4 +910,5 @@ export function updateThemeVars(
     palette.background.forEach((color) => modifyBackgroundColor(color, theme!));
     palette.text.forEach((color) => modifyForegroundColor(color, theme!));
     palette.border.forEach((color) => modifyBorderColor(color, theme!));
+    themeVarsSignatureTracker.record(signature);
 }

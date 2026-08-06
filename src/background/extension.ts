@@ -765,6 +765,7 @@ export class Extension {
     private static setThemeVars(data: PywalThemeVars, origin: string) {
         const currentTheme = UserStorage.settings.theme;
         const vars = getEffectivePywalThemeVars(data, currentTheme);
+        const signature = getPywalThemeVarsSignature(vars);
 
         if (isDuplicatePywalThemeVars(
             vars,
@@ -779,7 +780,7 @@ export class Extension {
             theme: {...currentTheme, ...patch},
             shadowCopy: Extension.getShadowCopyWithThemePatch(origin, patch),
         });
-        Extension.lastThemeVarsSignatures[vars.scheme] = getPywalThemeVarsSignature(vars);
+        Extension.lastThemeVarsSignatures[vars.scheme] = signature;
 
         if (Extension.isExtensionSwitchedOn() && UserStorage.settings.changeBrowserTheme) {
             setWindowTheme(UserStorage.settings.theme);
@@ -790,7 +791,7 @@ export class Extension {
         if (isActiveScheme) {
             TabManager.broadcastMessage({
                 type: MessageTypeBGtoCS.UPDATE_THEME_VARS,
-                data: vars,
+                data: {...vars, signature},
             });
         }
 

@@ -89,9 +89,9 @@ function onMessage(message: MessageBGtoCS | MessageUItoCS | DebugMessageBGtoCS) 
         if (message.scriptId !== scriptId) {
             return;
         }
-        const {bg, fg, sel, scheme} = message.data || {};
+        const {bg, fg, sel, scheme, signature} = message.data || {};
         if (bg && fg) {
-            updateThemeVars(bg, fg, sel, scheme);
+            updateThemeVars(bg, fg, sel, scheme, signature);
         }
         return;
     }

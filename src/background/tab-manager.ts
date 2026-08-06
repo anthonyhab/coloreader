@@ -8,6 +8,7 @@ import {getURLHostOrProtocol} from '../utils/url';
 import IconManager from './icon-manager';
 
 import {makeFirefoxHappy} from './make-firefox-happy';
+import {DeferredBroadcast} from './utils/deferred-broadcast';
 import {ASSERT, logInfo, logWarn} from './utils/log';
 import type {FileLoader} from './utils/network';
 import {createFileLoader} from './utils/network';
@@ -65,6 +66,10 @@ export default class TabManager {
     private static getTabMessage: TabManagerOptions['getTabMessage'];
     private static timestamp: TabManagerState['timestamp'];
     private static themeVarsPorts: Map<string, chrome.runtime.Port> = new Map();
+    private static activeTabId: number | null = null;
+    private static readonly deferredThemeVars = new DeferredBroadcast<MessageBGtoCS>(
+        (tabId, message) => TabManager.sendThemeVarsToFrames(tabId, message),
+    );
     private static readonly LOCAL_STORAGE_KEY = 'TabManager-state';
     private static readonly THEME_VARS_PORT = 'darkreader-theme-vars';
 
@@ -270,6 +275,17 @@ export default class TabManager {
         });
 
         chrome.tabs.onRemoved.addListener(async (tabId) => TabManager.removeFrame(tabId, 0));
+
+        // Track the visible tab synchronously so broadcastMessage() can keep the
+        // visible-tab path timer-free while deferring occluded tabs to idle.
+        chrome.tabs.onActivated.addListener(({tabId}) => {
+            TabManager.activeTabId = tabId;
+        });
+        getActiveTab().then((tab) => {
+            TabManager.activeTabId = tab?.id ?? null;
+        }).catch(() => {
+            // Keep activeTabId null: all broadcasts then defer by one tick.
+        });
     }
 
     private static sendDocumentMessage(tabId: number, documentId: string, message: MessageBGtoCS, frameId: number) {
@@ -352,6 +368,7 @@ export default class TabManager {
 
         if (frameId === 0) {
             delete TabManager.tabs[tabId];
+            TabManager.deferredThemeVars.cancel(tabId);
         }
 
         if (TabManager.tabs[tabId] && TabManager.tabs[tabId][frameId]) {
@@ -378,6 +395,7 @@ export default class TabManager {
         staleTabs.forEach((staleTabId) => {
             if (TabManager.tabs[staleTabId]) {
                 delete TabManager.tabs[staleTabId];
+                TabManager.deferredThemeVars.cancel(staleTabId);
             }
         });
 
@@ -458,36 +476,57 @@ export default class TabManager {
     /**
      * Broadcast a lightweight message to the already-connected content scripts.
      * Unlike sendMessage(), this avoids tabs.query() and theme regeneration.
+     * The visible tab is updated synchronously; occluded tabs are coalesced
+     * per tab and delivered on the next idle tick, so a palette change never
+     * waits behind background tabs.
      */
     static broadcastMessage(message: MessageBGtoCS): void {
         TabManager.timestamp++;
-        Object.entries(TabManager.tabs).forEach(([tabIdValue, frames]) => {
+        const isDeferred = message.type === MessageTypeBGtoCS.UPDATE_THEME_VARS;
+        Object.entries(TabManager.tabs).forEach(([tabIdValue]) => {
             const tabId = Number(tabIdValue);
-            Object.entries(frames)
-                .filter(([, {state}]) =>
-                    state === DocumentState.ACTIVE || state === DocumentState.PASSIVE
-                )
-                .forEach(([frameIdValue, {documentId, scriptId}]) => {
-                    const frameId = Number(frameIdValue);
-                    const outbound = {...message, scriptId};
-                    const fastPort = message.type === MessageTypeBGtoCS.UPDATE_THEME_VARS ?
-                        TabManager.themeVarsPorts.get(`${tabId}:${frameId}`) : null;
-                    if (fastPort) {
-                        try {
-                            fastPort.postMessage(outbound);
-                            return;
-                        } catch {
-                            TabManager.themeVarsPorts.delete(`${tabId}:${frameId}`);
-                        }
-                    }
-                    TabManager.sendDocumentMessage(
-                        tabId,
-                        documentId!,
-                        outbound,
-                        frameId,
-                    );
-                });
+            if (isDeferred && TabManager.activeTabId !== tabId) {
+                TabManager.deferredThemeVars.defer(tabId, message);
+                return;
+            }
+            if (isDeferred) {
+                // The tab is visible: a stale pending payload must not arrive
+                // after the synchronous one.
+                TabManager.deferredThemeVars.cancel(tabId);
+            }
+            TabManager.sendThemeVarsToFrames(tabId, message);
         });
+    }
+
+    private static sendThemeVarsToFrames(tabId: number, message: MessageBGtoCS): void {
+        const frames = TabManager.tabs[tabId];
+        if (!frames) {
+            return;
+        }
+        Object.entries(frames)
+            .filter(([, {state}]) =>
+                state === DocumentState.ACTIVE || state === DocumentState.PASSIVE
+            )
+            .forEach(([frameIdValue, {documentId, scriptId}]) => {
+                const frameId = Number(frameIdValue);
+                const outbound = {...message, scriptId};
+                const fastPort = message.type === MessageTypeBGtoCS.UPDATE_THEME_VARS ?
+                    TabManager.themeVarsPorts.get(`${tabId}:${frameId}`) : null;
+                if (fastPort) {
+                    try {
+                        fastPort.postMessage(outbound);
+                        return;
+                    } catch {
+                        TabManager.themeVarsPorts.delete(`${tabId}:${frameId}`);
+                    }
+                }
+                TabManager.sendDocumentMessage(
+                    tabId,
+                    documentId!,
+                    outbound,
+                    frameId,
+                );
+            });
     }
 
     // sendMessage will send a tab messages to all active tabs and their frames.
