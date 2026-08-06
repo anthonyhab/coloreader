@@ -1,0 +1,122 @@
+@import "../theme";
+
+/* ============================================================================
+   IDE Neobrutalist overrides — mirrors omarchy-firefox-theme/userChrome.css
+   Flat surfaces · No shadows · 1px dividers · Monospace · Tight spacing
+   Radius tokens from omarchy-radius.css: containers 8.4px, inputs 2.5px
+   ============================================================================ */
+
+/* Radius tokens — mirrors omarchy-radius.css, referenced via var() below */
+:root {
+    --dr-radius-container: 8.4px;
+    --dr-radius-input: 2.5px;
+}
+
+/* Kill every shadow, same global reset as userChrome.css */
+*,
+*::before,
+*::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+}
+
+/* Monospace type everywhere, same stack as the browser chrome */
+* {
+    font-family: "Cascadia Code", Consolas, "JetBrains Mono", monospace !important;
+}
+
+/* 1px dividers instead of 2px */
+* {
+    border-width: 1px !important;
+}
+
+/* Container radius (--dr-radius-container: 8.4px) */
+body,
+.button,
+.toggle,
+.checkbox,
+.multi-switch,
+.updown,
+.text-list,
+.shortcut,
+.time-range-picker,
+.control-group,
+.news,
+.news__header,
+.site-toggle,
+.custom-settings-toggle,
+.donate-link,
+.mobile-link,
+.m-help-button,
+.overlay,
+.loader,
+.header__more-settings__shortcut,
+.header__more-settings__enabled-by-default__checkbox,
+.header__more-settings__detect-dark-theme__checkbox,
+.header__more-settings__system-dark-mode__checkbox,
+.site-list-settings__text-list {
+    border-radius: var(--dr-radius-container) !important;
+}
+
+/* Input radius (--dr-radius-input: 2.5px) */
+.select__textbox,
+.select__expand,
+.select__list,
+.time-range-picker input,
+.textbox,
+.engine-switch__css-edit-button,
+.news__qr-code,
+.news-button::after {
+    border-radius: var(--dr-radius-input) !important;
+}
+
+/* Composite select: round the outer edges of the joined field + expander */
+.select__textbox {
+    border-radius: var(--dr-radius-input) 0 0 var(--dr-radius-input) !important;
+}
+
+.select__expand {
+    border-radius: 0 var(--dr-radius-input) var(--dr-radius-input) 0 !important;
+}
+
+/* Flat CTA button: no skew, no glow */
+.donate-link__text {
+    transform: none !important;
+}
+
+.donate-link:hover {
+    box-shadow: none !important;
+}
+
+/* Flat upgrade/birthday banners: no gradients */
+.ui-upgrade__button {
+    background-image: none !important;
+    background-color: @color-heading !important;
+}
+
+.birthday-container .donate-link {
+    background-image: none !important;
+    background-color: @color-control-hover !important;
+}
+
+/* Flat section fades in the header/news popovers */
+.header__more-settings::after,
+.news::before,
+.news__header {
+    background-image: none !important;
+}
+
+.news__header {
+    background-color: @color-back !important;
+}
+
+/* IDE-style active tab: square, bottom border only */
+.tab-panel__button,
+.tab-panel__button--active {
+    border-radius: 0 !important;
+}
+
+.tab-panel__button--active {
+    border-radius: 0 !important;
+    border-bottom: 1px solid @color-heading !important;
+}
