@@ -1,5 +1,5 @@
 import {DEFAULT_SETTINGS, DEFAULT_THEME} from '../defaults';
-import type {UserSettings, Theme, ThemePreset, CustomSiteConfig, TimeSettings, LocationSettings, Automation} from '../definitions';
+import type {UserSettings, Theme, ThemePreset, CustomSiteConfig, TimeSettings, LocationSettings, Automation, ExternalConnection, ShadowCopy} from '../definitions';
 
 import {AutomationMode} from './automation';
 
@@ -184,6 +184,30 @@ export function validateSettings(settings: Partial<UserSettings>): SettingValida
     validateProperty(settings, 'enableForProtectedPages', isBoolean, DEFAULT_SETTINGS);
     validateProperty(settings, 'enableContextMenus', isBoolean, DEFAULT_SETTINGS);
     validateProperty(settings, 'detectDarkTheme', isBoolean, DEFAULT_SETTINGS);
+
+    validateProperty(settings, 'externalConnections', isArray, DEFAULT_SETTINGS);
+    validateArray(settings, 'externalConnections', (connection: ExternalConnection) => {
+        if (!(isPlainObject(connection) &&
+            hasRequiredProperties(connection, ['id', 'isNative', 'blockedActions']))) {
+            return false;
+        }
+        return isNonEmptyString(connection.id) && connection.id.length <= 255 &&
+            isBoolean(connection.isNative) &&
+            isArray(connection.blockedActions) &&
+            connection.blockedActions.every((action) =>
+                isNonEmptyString(action) && action.length <= 255
+            );
+    });
+
+    validateProperty(settings, 'shadowCopy', isArray, DEFAULT_SETTINGS);
+    validateArray(settings, 'shadowCopy', (shadow: ShadowCopy) => {
+        if (!(isPlainObject(shadow) &&
+            hasRequiredProperties(shadow, ['id', 'copy', 'oldSettings']))) {
+            return false;
+        }
+        return isNonEmptyString(shadow.id) && shadow.id.length <= 255 &&
+            isPlainObject(shadow.copy) && isPlainObject(shadow.oldSettings);
+    });
 
     return {errors, settings};
 }

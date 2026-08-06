@@ -90,6 +90,26 @@ function stopStylePositionWatchers() {
     nodePositionWatchers.clear();
 }
 
+function getVariablesStyleText(currentTheme: Theme): string {
+    const selectionColors = currentTheme.selectionColor ? getSelectionColor(currentTheme) : null;
+    const neutralBackgroundColor = modifyBackgroundColor(
+        parseColorWithCache('#ffffff')!,
+        currentTheme,
+    );
+    const neutralTextColor = modifyForegroundColor(
+        parseColorWithCache('#000000')!,
+        currentTheme,
+    );
+    return [
+        `:root {`,
+        `   --darkreader-neutral-background: ${neutralBackgroundColor};`,
+        `   --darkreader-neutral-text: ${neutralTextColor};`,
+        `   --darkreader-selection-background: ${selectionColors?.backgroundColorSelection ?? 'initial'};`,
+        `   --darkreader-selection-text: ${selectionColors?.foregroundColorSelection ?? 'initial'};`,
+        `}`,
+    ].join('\n');
+}
+
 function injectStaticStyle(style: HTMLStyleElement, prevNode: Node | null, watchAlias: string, callback?: () => void) {
     const mode = getStyleInjectionMode();
     if (mode === 'next') {
@@ -137,17 +157,7 @@ function createStaticStyleOverrides() {
     injectStaticStyle(inlineStyle, invertStyle, 'inline');
 
     const variableStyle = createOrUpdateStyle('darkreader--variables');
-    const selectionColors = theme?.selectionColor ? getSelectionColor(theme) : null;
-    const neutralBackgroundColor = modifyBackgroundColor(parseColorWithCache('#ffffff')!, theme!);
-    const neutralTextColor = modifyForegroundColor(parseColorWithCache('#000000')!, theme!);
-    variableStyle.textContent = [
-        `:root {`,
-        `   --darkreader-neutral-background: ${neutralBackgroundColor};`,
-        `   --darkreader-neutral-text: ${neutralTextColor};`,
-        `   --darkreader-selection-background: ${selectionColors?.backgroundColorSelection ?? 'initial'};`,
-        `   --darkreader-selection-text: ${selectionColors?.foregroundColorSelection ?? 'initial'};`,
-        `}`,
-    ].join('\n');
+    variableStyle.textContent = getVariablesStyleText(theme!);
     injectStaticStyle(variableStyle, inlineStyle, 'variables', () => registerVariablesSheet(variableStyle.sheet!));
     registerVariablesSheet(variableStyle.sheet!);
 
@@ -843,26 +853,49 @@ export function cleanDynamicThemeCache(): void {
     prevFixes = null;
 }
 
-// === ULTRA-FAST THEME UPDATE ===
-export function updateThemeVars(bg: string, fg: string, sel?: string): void {
+/**
+ * Recalculate only the registered color variables for a new pywal palette.
+ * Existing transformed styles reference these variables, so no stylesheet tree
+ * walk or full dynamic-theme rebuild is required.
+ */
+export function updateThemeVars(
+    bg: string,
+    fg: string,
+    sel?: string,
+    scheme: 'dark' | 'light' = 'dark',
+): void {
     if (!theme) {
         return;
     }
 
-    // Update the theme object directly
-    theme.darkSchemeBackgroundColor = bg;
-    theme.darkSchemeTextColor = fg;
-    if (sel) {
-        theme.selectionColor = sel;
+    const selection = sel ?? theme.selectionColor;
+    const colorsMatch = scheme === 'dark' ?
+        theme.darkSchemeBackgroundColor === bg && theme.darkSchemeTextColor === fg :
+        theme.lightSchemeBackgroundColor === bg && theme.lightSchemeTextColor === fg;
+    if (colorsMatch && theme.selectionColor === selection) {
+        return;
     }
 
-    // Get the current palette
     const palette = getColorPalette();
+    if (scheme === 'dark') {
+        theme.darkSchemeBackgroundColor = bg;
+        theme.darkSchemeTextColor = fg;
+    } else {
+        theme.lightSchemeBackgroundColor = bg;
+        theme.lightSchemeTextColor = fg;
+    }
+    theme.selectionColor = selection;
 
-    // Clear and rebuild the color palette with new colors
     clearColorPalette();
 
-    // Re-register all colors with the new theme
+    const variableStyle = document.querySelector<HTMLStyleElement>('style.darkreader--variables');
+    if (variableStyle) {
+        variableStyle.textContent = getVariablesStyleText(theme);
+        if (variableStyle.sheet) {
+            registerVariablesSheet(variableStyle.sheet);
+        }
+    }
+
     palette.background.forEach((color) => modifyBackgroundColor(color, theme!));
     palette.text.forEach((color) => modifyForegroundColor(color, theme!));
     palette.border.forEach((color) => modifyBorderColor(color, theme!));

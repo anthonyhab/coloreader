@@ -85,11 +85,13 @@ function sendMessage(message: MessageCStoBG | MessageCStoUI): true | undefined {
 }
 
 function onMessage(message: MessageBGtoCS | MessageUItoCS | DebugMessageBGtoCS) {
-    // Handle updateThemeVars message for ultra-fast theme updates
-    if ((message as any).type === 'updateThemeVars') {
-        const {bg, fg, sel} = (message as any).data || {};
+    if (message.type === MessageTypeBGtoCS.UPDATE_THEME_VARS) {
+        if (message.scriptId !== scriptId) {
+            return;
+        }
+        const {bg, fg, sel, scheme} = message.data || {};
         if (bg && fg) {
-            updateThemeVars(bg, fg, sel);
+            updateThemeVars(bg, fg, sel, scheme);
         }
         return;
     }
@@ -194,6 +196,14 @@ runColorSchemeChangeDetector((isDark) =>
 );
 
 chrome.runtime.onMessage.addListener(onMessage);
+if (__FIREFOX_MV2__) {
+    try {
+        const themeVarsPort = chrome.runtime.connect({name: 'darkreader-theme-vars'});
+        themeVarsPort.onMessage.addListener(onMessage);
+    } catch {
+        // The regular runtime message channel remains the fallback.
+    }
+}
 sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
 
 function onPageHide(e: PageTransitionEvent) {

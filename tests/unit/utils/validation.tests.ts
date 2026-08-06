@@ -122,6 +122,8 @@ test('Settings Validation', () => {
         enableForProtectedPages: 'ok',
         enableContextMenus: 'yes',
         detectDarkTheme: 'no',
+        externalConnections: null,
+        shadowCopy: 'invalid',
     };
     validation = validateSettings(wonkySet as any);
     expect(validation.errors.length).toBeGreaterThan(0);
@@ -206,6 +208,8 @@ test('Settings Validation', () => {
         enableForProtectedPages: true,
         enableContextMenus: true,
         detectDarkTheme: true,
+        externalConnections: [{id: 'darkreader', isNative: true, blockedActions: []}],
+        shadowCopy: [],
     };
     const validSetCopy = JSON.parse(JSON.stringify(validSet));
     validation = validateSettings(validSet);

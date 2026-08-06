@@ -64,13 +64,30 @@ export default class TabManager {
     private static onColorSchemeChange: TabManagerOptions['onColorSchemeChange'];
     private static getTabMessage: TabManagerOptions['getTabMessage'];
     private static timestamp: TabManagerState['timestamp'];
+    private static themeVarsPorts: Map<string, chrome.runtime.Port> = new Map();
     private static readonly LOCAL_STORAGE_KEY = 'TabManager-state';
+    private static readonly THEME_VARS_PORT = 'darkreader-theme-vars';
 
     static init({getConnectionMessage, onColorSchemeChange, getTabMessage}: TabManagerOptions): void {
         TabManager.stateManager = new StateManager<TabManagerState>(TabManager.LOCAL_STORAGE_KEY, this, {tabs: {}, timestamp: 0}, logWarn);
         TabManager.tabs = {};
         TabManager.onColorSchemeChange = onColorSchemeChange;
         TabManager.getTabMessage = getTabMessage;
+
+        chrome.runtime.onConnect.addListener((port) => {
+            if (port.name !== TabManager.THEME_VARS_PORT ||
+                typeof port.sender?.tab?.id !== 'number' ||
+                typeof port.sender.frameId !== 'number') {
+                return;
+            }
+            const key = `${port.sender.tab.id}:${port.sender.frameId}`;
+            TabManager.themeVarsPorts.set(key, port);
+            port.onDisconnect.addListener(() => {
+                if (TabManager.themeVarsPorts.get(key) === port) {
+                    TabManager.themeVarsPorts.delete(key);
+                }
+            });
+        });
 
         chrome.runtime.onMessage.addListener((message: MessageCStoBG | MessageUItoBG, sender, sendResponse): boolean => {
             if (isFirefox && makeFirefoxHappy(message, sender, sendResponse)) {
@@ -435,6 +452,41 @@ export default class TabManager {
                 {file: '/inject/fallback.js'},
                 {file: '/inject/index.js'},
             ],
+        });
+    }
+
+    /**
+     * Broadcast a lightweight message to the already-connected content scripts.
+     * Unlike sendMessage(), this avoids tabs.query() and theme regeneration.
+     */
+    static broadcastMessage(message: MessageBGtoCS): void {
+        TabManager.timestamp++;
+        Object.entries(TabManager.tabs).forEach(([tabIdValue, frames]) => {
+            const tabId = Number(tabIdValue);
+            Object.entries(frames)
+                .filter(([, {state}]) =>
+                    state === DocumentState.ACTIVE || state === DocumentState.PASSIVE
+                )
+                .forEach(([frameIdValue, {documentId, scriptId}]) => {
+                    const frameId = Number(frameIdValue);
+                    const outbound = {...message, scriptId};
+                    const fastPort = message.type === MessageTypeBGtoCS.UPDATE_THEME_VARS ?
+                        TabManager.themeVarsPorts.get(`${tabId}:${frameId}`) : null;
+                    if (fastPort) {
+                        try {
+                            fastPort.postMessage(outbound);
+                            return;
+                        } catch {
+                            TabManager.themeVarsPorts.delete(`${tabId}:${frameId}`);
+                        }
+                    }
+                    TabManager.sendDocumentMessage(
+                        tabId,
+                        documentId!,
+                        outbound,
+                        frameId,
+                    );
+                });
         });
     }
 

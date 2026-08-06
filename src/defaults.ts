@@ -107,6 +107,18 @@ export const DEFAULT_SETTINGS: UserSettings = {
     enableForProtectedPages: false,
     enableContextMenus: false,
     detectDarkTheme: true,
-    externalConnections: [{ id: "darkreader", isNative: true, blockedActions: [] }],
+    externalConnections: [
+        {id: 'darkreader', isNative: true, blockedActions: []},
+        {
+            id: 'pywalfox@bb.hab.rip',
+            isNative: false,
+            blockedActions: ['toggle', 'toggleActiveTab', 'changeSettings', 'requestSettings'],
+        },
+        {
+            id: 'pywalfox@frewacom.org',
+            isNative: false,
+            blockedActions: ['toggle', 'toggleActiveTab', 'changeSettings', 'requestSettings'],
+        },
+    ],
     shadowCopy: [],
 };

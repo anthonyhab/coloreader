@@ -1,4 +1,4 @@
-import type {ExtensionData, Theme, Shortcuts, UserSettings, TabInfo, TabData, Command, DevToolsData, ExternalConnection, ExternalRequest} from '../definitions';
+import type {ExtensionData, Theme, Shortcuts, UserSettings, TabInfo, TabData, Command, DevToolsData, ExternalConnection} from '../definitions';
 import createCSSFilterStylesheet from '../generators/css-filter';
 import {getDetectorHintsFor} from '../generators/detector-hints';
 import {getDynamicThemeFixesFor} from '../generators/dynamic-theme';
@@ -18,10 +18,12 @@ import {isURLInList, getURLHostOrProtocol, isURLEnabled, isPDF} from '../utils/u
 
 import ConfigManager from './config-manager';
 import DevTools from './devtools';
+import {parseExternalRequest, resolveExternalConnection} from './external-connection';
 import IconManager from './icon-manager';
 import type {ExtensionAdapter} from './messenger';
 import Messenger from './messenger';
 import Newsmaker from './newsmaker';
+import {getEffectivePywalThemeVars, getPywalThemePatch, getPywalThemeVarsSignature, isDuplicatePywalThemeVars, resetPywalThemeShadow, type PywalThemeScheme, type PywalThemeVars, updatePywalThemeShadow, validatePywalThemeMode, validatePywalThemeVars} from './pywal-theme';
 import TabManager from './tab-manager';
 import UIHighlights from './ui-highlights';
 import UserStorage from './user-storage';
@@ -29,7 +31,7 @@ import {getCommands, canInjectScript, writeLocalStorage, removeLocalStorage} fro
 import {logInfo, logWarn} from './utils/log';
 import {setWindowTheme, resetWindowTheme} from './window-theme';
 import {DEFAULT_SETTINGS} from '../defaults';
-import {getValidatedObject, getPreviousObject} from '../utils/object';
+import {getValidatedObject} from '../utils/object';
 import {forEach, isArrayEqual} from '../utils/array';
 
 
@@ -62,6 +64,10 @@ export class Extension {
     private static wasLastColorSchemeDark: boolean | null = null;
     private static startBarrier: PromiseBarrier<void, void> | null = null;
     private static stateManager: StateManager<ExtensionState> | null = null;
+    private static lastThemeVarsSignatures: Record<PywalThemeScheme, string | null> = {
+        dark: null,
+        light: null,
+    };
 
     private static readonly ALARM_NAME = 'auto-time-alarm';
     private static readonly LOCAL_STORAGE_KEY = 'Extension-state';
@@ -213,12 +219,12 @@ export class Extension {
         }
     }
 
-    private static wakeInterval: number = -1;
+    private static wakeInterval: ReturnType<typeof setInterval> | null = null;
 
     private static runWakeDetector() {
         const WAKE_CHECK_INTERVAL = getDuration({minutes: 1});
         const WAKE_CHECK_INTERVAL_ERROR = getDuration({seconds: 10});
-        if (this.wakeInterval >= 0) {
+        if (this.wakeInterval !== null) {
             clearInterval(this.wakeInterval);
         }
 
@@ -559,8 +565,7 @@ export class Extension {
         }
         if (!isArrayEqual(prev.externalConnections, UserStorage.settings.externalConnections)) {
             Extension.connectToNative(UserStorage.settings.externalConnections
-                .filter((externalConnection) => externalConnection.isNative)
-                .map((nativeConnection) => nativeConnection.id));
+                .filter((externalConnection) => externalConnection.isNative));
             Extension.cleanNatives(prev.externalConnections.filter((entry) =>
                 !UserStorage.settings.externalConnections.find((e) => e.id === entry.id)
             ));
@@ -571,6 +576,7 @@ export class Extension {
     }
 
     private static setTheme($theme: Partial<Theme>) {
+        Extension.lastThemeVarsSignatures = {dark: null, light: null};
         UserStorage.set({theme: {...UserStorage.settings.theme, ...$theme}});
 
         if (Extension.isExtensionSwitchedOn() && UserStorage.settings.changeBrowserTheme) {
@@ -595,8 +601,26 @@ export class Extension {
         Extension.changeSettings({shadowCopy: newShadowCopy});
     }
 
-    static externalRequestsHandler(incomingData: ExternalRequest, origin: string) {
-        const {type, data, isNative} = incomingData;
+    static externalRequestsHandler(incomingData: unknown, connection: ExternalConnection) {
+        const request = parseExternalRequest(incomingData);
+        if (!request) {
+            logWarn(`Port: ${connection.id}, rejected malformed or unsupported request.`);
+            return;
+        }
+        const {type, data} = request;
+        const {id: origin, isNative} = connection;
+        const currentConnection = resolveExternalConnection(
+            UserStorage.settings.externalConnections,
+            connection,
+            type,
+        );
+        const isRemovedConnectionCleanup = type === 'resetSettings' &&
+            !UserStorage.settings.externalConnections.some((c) => c.id === origin && c.isNative === isNative) &&
+            UserStorage.settings.shadowCopy.some(({id}) => id === origin);
+        if (!currentConnection && !isRemovedConnectionCleanup) {
+            logWarn(`Port: ${origin}, unauthorized or blocked action: ${type}.`);
+            return;
+        }
 
         if (type === 'toggle') {
             logInfo(`Port: ${origin}, toggled dark reader.`);
@@ -637,71 +661,80 @@ export class Extension {
             }
         }
 
-        if (type === 'setTheme') {
+        if (type === 'setTheme' || type === 'setThemeVars') {
             if (!data) {
-                logWarn('No data detected for setTheme.');
+                logWarn(`No data detected for ${type}.`);
                 return;
             }
-            logInfo(`Port: ${origin}, updating theme via fast path.`);
-            // Use fast path for color-only updates
-            const bg = data.darkSchemeBackgroundColor;
-            const fg = data.darkSchemeTextColor;
-            const sel = data.selectionColor;
-            if (bg || fg) {
-                Extension.setThemeVars({bg: bg, fg: fg, sel: sel});
+            const messageData = data as Record<string, unknown>;
+            const themeVars = validatePywalThemeVars(messageData);
+            const mode = validatePywalThemeMode(messageData);
+            if (themeVars) {
+                logInfo(`Port: ${origin}, updating ${themeVars.scheme} theme via fast path.`);
+                Extension.setThemeVars(themeVars, origin);
+                if (type === 'setTheme' && mode !== null) {
+                    logInfo(`Port: ${origin}, changing theme mode to ${mode}.`);
+                    Extension.setExternalThemeMode(mode, origin);
+                }
+            } else {
+                if (type !== 'setTheme' || mode == null) {
+                    logWarn(`Port: ${origin}, rejected invalid theme data.`);
+                    return;
+                }
+                logInfo(`Port: ${origin}, changing theme mode to ${mode}.`);
+                Extension.setExternalThemeMode(mode, origin);
             }
         }
 
-        // === ULTRA-FAST THEME UPDATE ===
-        if (type === 'setThemeVars') {
-            if (!data) {
-                logWarn('No data detected for setThemeVars.');
-                return;
-            }
-            logInfo(`Port: ${origin}, updating theme vars.`);
-            Extension.setThemeVars(data);
+        if (type === 'resetThemeVars') {
+            Extension.resetExternalSettings(origin, isNative);
+        }
+
+        if (type === 'error') {
+            const message = data && typeof data.message === 'string' ? data.message : 'Unknown native host error';
+            logWarn(`Port: ${origin}, ${message}`);
         }
 
         if (type === 'resetSettings') {
-            const shadowCopy = UserStorage.settings.shadowCopy.find(({id}) => id === origin);
-            if (!shadowCopy) {
-                logWarn('No data detected to reset settings.');
-                return;
-            }
-            const previousSettings = getPreviousObject(shadowCopy.copy, UserStorage.settings, shadowCopy.oldSettings);
-            const index = UserStorage.settings.shadowCopy.indexOf(shadowCopy);
-            const newShadowCopy = UserStorage.settings.shadowCopy.slice();
-            newShadowCopy.splice(index, 1);
-            previousSettings ? Extension.changeSettings({...previousSettings, shadowCopy: newShadowCopy}) : Extension.changeSettings({shadowCopy: newShadowCopy});
-            if (isNative) {
-                Extension.connectedNativesPorts.delete(origin);
-            }
-            logInfo('Reset', UserStorage.settings);
+            Extension.resetExternalSettings(origin, isNative);
         }
     }
 
     private static connectedNativesPorts: Map<string, chrome.runtime.Port> = new Map();
 
-    private static connectToNative = (native: string[] | string) => {
-        if (Array.isArray(native)) {
-            forEach(native, Extension.connectToNative);
-        } else if (!Extension.connectedNativesPorts.has(native)) {
-            const port = chrome.runtime.connectNative(native);
-            Extension.connectedNativesPorts.set(native, port);
-            port.onMessage.addListener((incomingData) => Extension.externalRequestsHandler(incomingData, native));
-            port.onDisconnect.addListener(() => Extension.externalRequestsHandler({type: 'resetSettings', isNative: true}, native));
+    private static connectToNative = (connection: ExternalConnection[] | ExternalConnection) => {
+        if (Array.isArray(connection)) {
+            forEach(connection, Extension.connectToNative);
+        } else if (!Extension.connectedNativesPorts.has(connection.id)) {
+            const port = chrome.runtime.connectNative(connection.id);
+            Extension.connectedNativesPorts.set(connection.id, port);
+            port.onMessage.addListener((incomingData) => Extension.externalRequestsHandler(incomingData, connection));
+            port.onDisconnect.addListener(() => {
+                // Keep the durable shadow active across browser/background restarts.
+                // The host sends resetThemeVars explicitly when its palette vanishes.
+                Extension.connectedNativesPorts.delete(connection.id);
+            });
             port.postMessage('init');
         }
     };
 
     private static registerExternalConnections() {
         Extension.connectToNative(UserStorage.settings.externalConnections
-            .filter((externalConnection) => externalConnection.isNative)
-            .map((nativeConnection) => nativeConnection.id));
+            .filter((externalConnection) => externalConnection.isNative));
         chrome.runtime.onConnectExternal.addListener((port) => {
-            logInfo(`Port ${port.sender!.origin} has been connected to dark reader.`);
-            port.onMessage.addListener((incomingData) => Extension.externalRequestsHandler(incomingData, port.sender?.origin!));
-            port.onDisconnect.addListener(() => Extension.externalRequestsHandler({type: 'resetSettings', isNative: false}, port.sender?.origin!));
+            const senderId = port.sender?.id;
+            const connection = UserStorage.settings.externalConnections.find((candidate) =>
+                !candidate.isNative && candidate.id === senderId
+            );
+            if (!connection) {
+                logWarn(`Rejected unauthorized external port: ${senderId || '(missing id)'}.`);
+                port.disconnect();
+                return;
+            }
+            logInfo(`Port ${connection.id} has been connected to dark reader.`);
+            port.onMessage.addListener((incomingData) => Extension.externalRequestsHandler(incomingData, connection));
+            // Disconnects are transient during either extension's restart. Only an
+            // explicit resetSettings request may restore the pre-integration theme.
         });
     }
 
@@ -716,35 +749,89 @@ export class Extension {
             });
     }
 
-    // === ULTRA-FAST THEME UPDATE ===
-    private static setThemeVars(data: { bg: string; fg: string; sel: string }) {
-        const {bg, fg, sel} = data;
-        
-        // Update stored theme settings (persists across restarts, used by new tabs)
-        const themeUpdate: Partial<Theme> = {};
-        if (bg) themeUpdate.darkSchemeBackgroundColor = bg;
-        if (fg) themeUpdate.darkSchemeTextColor = fg;
-        if (sel) themeUpdate.selectionColor = sel;
-        
-        if (Object.keys(themeUpdate).length > 0) {
-            UserStorage.set({theme: {...UserStorage.settings.theme, ...themeUpdate}});
+    private static getShadowCopyWithThemePatch(origin: string, patch: Partial<Theme>) {
+        return updatePywalThemeShadow(
+            UserStorage.settings.shadowCopy,
+            origin,
+            UserStorage.settings.theme,
+            patch,
+        );
+    }
+
+    /**
+     * Update only the active color transformation variables. The durable
+     * shadow copy makes reset survive background and browser restarts.
+     */
+    private static setThemeVars(data: PywalThemeVars, origin: string) {
+        const currentTheme = UserStorage.settings.theme;
+        const vars = getEffectivePywalThemeVars(data, currentTheme);
+
+        if (isDuplicatePywalThemeVars(
+            vars,
+            currentTheme,
+            Extension.lastThemeVarsSignatures[vars.scheme],
+        )) {
+            return;
         }
-        
-        // Send message to all tabs to update CSS variables (fast path)
-        chrome.tabs.query({}, (tabs) => {
-            tabs.forEach(tab => {
-                if (tab.id) {
-                    chrome.tabs.sendMessage(tab.id, {
-                        type: 'updateThemeVars',
-                        bg: bg,
-                        fg: fg,
-                        sel: sel
-                    }).catch(() => {
-                        // Ignore errors for tabs that can't receive messages
-                    });
-                }
-            });
+
+        const patch = getPywalThemePatch(vars);
+        UserStorage.set({
+            theme: {...currentTheme, ...patch},
+            shadowCopy: Extension.getShadowCopyWithThemePatch(origin, patch),
         });
+        Extension.lastThemeVarsSignatures[vars.scheme] = getPywalThemeVarsSignature(vars);
+
+        if (Extension.isExtensionSwitchedOn() && UserStorage.settings.changeBrowserTheme) {
+            setWindowTheme(UserStorage.settings.theme);
+        }
+
+        const isActiveScheme = (UserStorage.settings.theme.mode === 1 && vars.scheme === 'dark') ||
+            (UserStorage.settings.theme.mode === 0 && vars.scheme === 'light');
+        if (isActiveScheme) {
+            TabManager.broadcastMessage({
+                type: MessageTypeBGtoCS.UPDATE_THEME_VARS,
+                data: vars,
+            });
+        }
+
+        // UserStorage debounces persistence; keep it behind the visual update.
+        UserStorage.saveSettings();
+    }
+
+    private static setExternalThemeMode(mode: 0 | 1, origin: string) {
+        const currentTheme = UserStorage.settings.theme;
+        if (currentTheme.mode === mode) {
+            return;
+        }
+        const patch: Partial<Theme> = {mode};
+        UserStorage.set({
+            theme: {...currentTheme, ...patch},
+            shadowCopy: Extension.getShadowCopyWithThemePatch(origin, patch),
+        });
+        Extension.lastThemeVarsSignatures = {dark: null, light: null};
+        UserStorage.saveSettings();
+        if (Extension.isExtensionSwitchedOn() && UserStorage.settings.changeBrowserTheme) {
+            setWindowTheme(UserStorage.settings.theme);
+        }
+        Extension.onSettingsChanged();
+    }
+
+    private static resetExternalSettings(origin: string, isNative: boolean) {
+        const reset = resetPywalThemeShadow(
+            UserStorage.settings.shadowCopy,
+            origin,
+            UserStorage.settings,
+        );
+        if (!reset) {
+            logWarn(`No saved settings found for ${origin}.`);
+            return;
+        }
+        Extension.lastThemeVarsSignatures = {dark: null, light: null};
+        Extension.changeSettings({...reset.previousSettings, shadowCopy: reset.shadowCopy});
+        if (isNative) {
+            Extension.connectedNativesPorts.delete(origin);
+        }
+        logInfo(`Reset settings controlled by ${origin}.`);
     }
 
     private static async reportChanges() {

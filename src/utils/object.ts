@@ -29,17 +29,17 @@ export function getValidatedObject<T>(source: any, compare: T, sanitizeList: str
 
 export function getPreviousObject<T>(copy: Partial<T>, newSettings: Partial<T>, oldSettings: Partial<T>): Partial<T> {
     const result: any = {};
-    const keys = Object.keys(newSettings) as (keyof T)[];
-    
+    const keys = Object.keys(newSettings) as Array<keyof T>;
+
     for (const key of keys) {
         const copyValue = copy[key];
         const newValue = newSettings[key];
         const oldValue = oldSettings[key];
-        
+
         if (copyValue === undefined) {
             continue;
         }
-        
+
         if (typeof copyValue === 'object' && copyValue !== null && !Array.isArray(copyValue)) {
             const nestedResult = getPreviousObject(
                 copyValue as Partial<T>,
@@ -53,6 +53,6 @@ export function getPreviousObject<T>(copy: Partial<T>, newSettings: Partial<T>, 
             result[key] = oldValue;
         }
     }
-    
+
     return result;
 }
