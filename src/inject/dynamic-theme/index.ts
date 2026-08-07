@@ -748,6 +748,8 @@ export function createOrUpdateDynamicThemeInternal(themeConfig: Theme, dynamicTh
             disableConflictingPlugins();
             document.documentElement.setAttribute('data-darkreader-mode', 'dynamic');
             document.documentElement.setAttribute('data-darkreader-scheme', theme!.mode ? 'dark' : 'dimmed');
+            document.documentElement.style.removeProperty('background-color');
+            document.documentElement.style.removeProperty('filter');
             createThemeAndWatchForUpdates();
         };
 
@@ -802,6 +804,8 @@ function removeProxy() {
 const cleaners: Array<() => void> = [];
 
 export function removeDynamicTheme(): void {
+    document.documentElement.style.removeProperty('background-color');
+    document.documentElement.style.removeProperty('filter');
     document.documentElement.removeAttribute(`data-darkreader-mode`);
     document.documentElement.removeAttribute(`data-darkreader-scheme`);
     cleanDynamicThemeCache();

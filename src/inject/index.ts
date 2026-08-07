@@ -1,4 +1,4 @@
-import type {DebugMessageBGtoCS, MessageBGtoCS, MessageCStoBG, MessageCStoUI, MessageUItoCS} from '../definitions';
+import type {DebugMessageBGtoCS, MessageBGtoCS, MessageCStoBG, MessageCStoUI, MessageUItoCS, Theme} from '../definitions';
 import {isSystemDarkModeEnabled, runColorSchemeChangeDetector, stopColorSchemeChangeDetector, emulateColorScheme} from '../utils/media-query';
 import {DebugMessageTypeBGtoCS, MessageTypeBGtoCS, MessageTypeCStoBG, MessageTypeCStoUI, MessageTypeUItoCS} from '../utils/message';
 import {generateUID} from '../utils/uid';
@@ -12,6 +12,7 @@ import {collectCSS} from './dynamic-theme/css-collection';
 import {createOrUpdateStyle, removeStyle} from './style';
 import {createOrUpdateSVGFilter, removeSVGFilter} from './svg-filter';
 import {logWarn, logInfoCollapsed} from './utils/log';
+import {isURLInList} from '../utils/url';
 
 declare const __DEBUG__: boolean;
 declare const __PLUS__: boolean;
@@ -205,6 +206,30 @@ if (__FIREFOX_MV2__) {
     }
 }
 sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
+
+// bb-boot-background: the first paint can precede both userContent.css
+// (cold chrome->content IPC) and the async theme apply, so documents flash
+// their natural white. Paint the canvas dark synchronously at
+// document_start; the dark-bg sites cover it with their own body background,
+// and this is removed when the theme applies, tears down, or the persisted
+// state says light mode / a toggled-off site (storage resolves before the
+// first paint in practice).
+document.documentElement.style.setProperty('filter', 'invert(1) hue-rotate(180deg)');
+chrome.storage.local.get({
+    theme: undefined,
+    enabledByDefault: undefined,
+    enabledFor: undefined,
+    disabledFor: undefined,
+}, (result: {theme?: Theme; enabledByDefault?: boolean; enabledFor?: string[]; disabledFor?: string[]}) => {
+    const url = location.href;
+    const enabled = result.enabledByDefault === false
+        ? isURLInList(url, result.enabledFor || [])
+        : !isURLInList(url, result.disabledFor || []);
+    if (!enabled || (result.theme && result.theme.mode !== 1)) {
+        document.documentElement.style.removeProperty('filter');
+        document.documentElement.setAttribute('data-bb-off', '');
+    }
+});
 
 function onPageHide(e: PageTransitionEvent) {
     if (e.persisted === false) {
